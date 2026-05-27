@@ -9,7 +9,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ym-actions/laravel-coverage-comment/releases"><img src="https://img.shields.io/github/v/release/ym-actions/laravel-coverage-comment?style=flat-square&color=blue" alt="Latest Release" /></a>
   <a href="https://github.com/ym-actions/laravel-coverage-comment/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ym-actions/laravel-coverage-comment?style=flat-square&color=green" alt="License" /></a>
 </p>
 
