@@ -1,0 +1,215 @@
+name: Laravel Coverage Comment
+
+on:
+  workflow_call:
+    inputs:
+      php-version:
+        description: "PHP version to set up"
+        required: false
+        default: "8.3"
+        type: string
+      php-extensions:
+        description: "Additional PHP extensions to install"
+        required: false
+        default: "dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath"
+        type: string
+      test-command:
+        description: "The command to execute tests and generate coverage output"
+        required: false
+        default: "./vendor/bin/pest --ci --coverage"
+        type: string
+      coverage-driver:
+        description: "PHP extension to use for coverage (e.g. pcov, xdebug)"
+        required: false
+        default: "pcov"
+        type: string
+      min-coverage:
+        description: "Minimum coverage percentage required"
+        required: false
+        default: "0"
+        type: string
+      fail-on-low-coverage:
+        description: "Whether to fail the build if coverage is below min-coverage"
+        required: false
+        default: "false"
+        type: string
+      build-assets:
+        description: "Whether to build frontend assets"
+        required: false
+        default: "false"
+        type: string
+      asset-build-command:
+        description: "The command to install dependencies and build assets (set to 'auto' to auto-detect npm, yarn, pnpm, bun)"
+        required: false
+        default: "auto"
+        type: string
+      node-version:
+        description: "Node version to use if build-assets is true"
+        required: false
+        default: "20"
+        type: string
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: ${{ inputs.build-assets == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install Node Dependencies & Build Assets
+        if: ${{ inputs.build-assets == 'true' }}
+        run: |
+          if [ "${{ inputs.asset-build-command }}" != "auto" ]; then
+            echo "Running custom build command..."
+            ${{ inputs.asset-build-command }}
+          else
+            if [ -f "pnpm-lock.yaml" ]; then
+              echo "Detected pnpm, installing pnpm globally..."
+              npm install -g pnpm
+              pnpm install --frozen-lockfile
+              pnpm run build
+            elif [ -f "yarn.lock" ]; then
+              echo "Detected yarn..."
+              yarn install --frozen-lockfile
+              yarn run build
+            elif [ -f "bun.lockb" ]; then
+              echo "Detected bun, installing bun globally..."
+              npm install -g bun
+              bun install --frozen-lockfile
+              bun run build
+            else
+              echo "Detected npm..."
+              if [ -f "package-lock.json" ]; then
+                npm ci
+              else
+                npm install
+              fi
+              npm run build
+            fi
+          fi
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          extensions: ${{ inputs.php-extensions }}
+          tools: composer:v2
+          coverage: ${{ inputs.coverage-driver }}
+
+      - name: Get Composer Cache Directory
+        id: composer-cache
+        run: |
+          echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Install Dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Prepare Environment
+        run: |
+          if [ -f ".env.testing" ]; then
+            cp .env.testing .env
+          elif [ -f ".env.example" ]; then
+            cp .env.example .env
+          fi
+          if [ -f "artisan" ]; then
+            php artisan key:generate --env=testing
+          fi
+
+      - name: Run Tests
+        shell: bash
+        run: |
+          ${{ inputs.test-command }} | tee coverage.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload Logs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: laravel-logs
+          path: storage/logs
+
+      - name: Process Coverage Summary
+        if: github.event_name == 'pull_request' && hashFiles('coverage.txt') != ''
+        id: coverage
+        run: |
+          # Extract total percentage and strip non-numeric characters like '%'
+          TOTAL=$(grep "Total:" coverage.txt | awk '{print $2}' | tr -d '%')
+
+          # If TOTAL is empty, default to N/A
+          if [ -z "$TOTAL" ]; then
+            TOTAL="N/A"
+          fi
+
+          MIN_COV="${{ inputs.min-coverage }}"
+          IS_LOW="false"
+
+          # Check if coverage is below min threshold using awk for float comparison
+          if [ "$TOTAL" != "N/A" ] && [ -n "$MIN_COV" ] && [ "$MIN_COV" != "0" ]; then
+            IS_LOW=$(awk -v t="$TOTAL" -v m="$MIN_COV" 'BEGIN {print (t < m) ? "true" : "false"}')
+          fi
+
+          echo "IS_LOW=$IS_LOW" >> $GITHUB_OUTPUT
+          echo "TOTAL=$TOTAL" >> $GITHUB_OUTPUT
+
+          # Prepare the comment body
+          echo "REPORT<<EOF" >> $GITHUB_OUTPUT
+
+          if [ "$TOTAL" = "N/A" ]; then
+            echo "### 📊 Test Coverage: N/A" >> $GITHUB_OUTPUT
+          elif [ "$IS_LOW" = "true" ]; then
+            echo "### ⚠️ Test Coverage: $TOTAL% (Target: $MIN_COV%)" >> $GITHUB_OUTPUT
+          else
+            if [ -n "$MIN_COV" ] && [ "$MIN_COV" != "0" ]; then
+              echo "### ✅ Test Coverage: $TOTAL% (Target: $MIN_COV%)" >> $GITHUB_OUTPUT
+            else
+              echo "### 📊 Test Coverage: $TOTAL%" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+          echo "" >> $GITHUB_OUTPUT
+          echo "<details><summary>Click to view detailed report</summary>" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "\`\`\`" >> $GITHUB_OUTPUT
+
+          # Extract the table part (starting from the first file path line)
+          if grep -q "\.\.\." coverage.txt; then
+            sed -n '/\.\.\./,$p' coverage.txt | sed 's/\x1b\[[0-9;]*m//g' >> $GITHUB_OUTPUT
+          else
+            cat coverage.txt | sed 's/\x1b\[[0-9;]*m//g' >> $GITHUB_OUTPUT
+          fi
+
+          echo "\`\`\`" >> $GITHUB_OUTPUT
+          echo "</details>" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post Coverage Comment
+        if: github.event_name == 'pull_request' && steps.coverage.outputs.REPORT != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: test-coverage
+          message: ${{ steps.coverage.outputs.REPORT }}
+
+      - name: Fail on Low Coverage
+        if: ${{ inputs.fail-on-low-coverage == 'true' && steps.coverage.outputs.IS_LOW == 'true' }}
+        run: |
+          echo "Error: Test coverage (${{ steps.coverage.outputs.TOTAL }}%) is below the minimum required threshold of ${{ inputs.min-coverage }}%."
+          exit 1

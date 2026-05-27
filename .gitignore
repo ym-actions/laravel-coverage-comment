@@ -1,0 +1,19 @@
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local composer/npm directories (if any local testing is done)
+vendor/
+node_modules/
+
+# Test coverage & Logs
+coverage.txt
+.phpunit.cache/
+storage/logs/
+*.log
