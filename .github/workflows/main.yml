@@ -70,26 +70,72 @@ jobs:
       - name: Install Node Dependencies & Build Assets
         if: ${{ inputs.build-assets == 'true' }}
         run: |
+          # Install pnpm if needed and not already installed
+          INSTALL_PNPM=false
+          if [ -f "pnpm-lock.yaml" ]; then
+            INSTALL_PNPM=true
+          else
+            case "${{ inputs.asset-build-command }}" in
+              *pnpm*) INSTALL_PNPM=true ;;
+            esac
+          fi
+          if [ "$INSTALL_PNPM" = "true" ]; then
+            if ! command -v pnpm >/dev/null 2>&1; then
+              echo "pnpm not found. Installing pnpm globally..."
+              npm install -g pnpm
+            fi
+          fi
+
+          # Install bun if needed and not already installed
+          INSTALL_BUN=false
+          if [ -f "bun.lockb" ]; then
+            INSTALL_BUN=true
+          else
+            case "${{ inputs.asset-build-command }}" in
+              *bun*) INSTALL_BUN=true ;;
+            esac
+          fi
+          if [ "$INSTALL_BUN" = "true" ]; then
+            if ! command -v bun >/dev/null 2>&1; then
+              echo "bun not found. Installing bun globally..."
+              npm install -g bun
+            fi
+          fi
+
+          # Install yarn if needed and not already installed
+          INSTALL_YARN=false
+          if [ -f "yarn.lock" ]; then
+            INSTALL_YARN=true
+          else
+            case "${{ inputs.asset-build-command }}" in
+              *yarn*) INSTALL_YARN=true ;;
+            esac
+          fi
+          if [ "$INSTALL_YARN" = "true" ]; then
+            if ! command -v yarn >/dev/null 2>&1; then
+              echo "yarn not found. Installing yarn globally..."
+              npm install -g yarn
+            fi
+          fi
+
           if [ "${{ inputs.asset-build-command }}" != "auto" ]; then
             echo "Running custom build command..."
             ${{ inputs.asset-build-command }}
           else
             if [ -f "pnpm-lock.yaml" ]; then
-              echo "Detected pnpm, installing pnpm globally..."
-              npm install -g pnpm
+              echo "Running pnpm build..."
               pnpm install --frozen-lockfile
               pnpm run build
             elif [ -f "yarn.lock" ]; then
-              echo "Detected yarn..."
+              echo "Running yarn build..."
               yarn install --frozen-lockfile
               yarn run build
             elif [ -f "bun.lockb" ]; then
-              echo "Detected bun, installing bun globally..."
-              npm install -g bun
+              echo "Running bun build..."
               bun install --frozen-lockfile
               bun run build
             else
-              echo "Detected npm..."
+              echo "Running npm build..."
               if [ -f "package-lock.json" ]; then
                 npm ci
               else
