@@ -4,12 +4,12 @@ on:
   workflow_call:
     inputs:
       php-version:
-        description: "PHP version to set up"
+        description: "PHP version to set up (defaults to 8.3)"
         required: false
         default: "8.3"
         type: string
       php-extensions:
-        description: "Additional PHP extensions to install"
+        description: "Additional PHP extensions to install. Comma-separated (defaults to 'dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath')"
         required: false
         default: "dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath"
         type: string
@@ -44,7 +44,7 @@ on:
         default: "auto"
         type: string
       node-version:
-        description: "Node version to use if build-assets is true"
+        description: "Node version to use if build-assets is true (defaults to 20)"
         required: false
         default: "20"
         type: string
