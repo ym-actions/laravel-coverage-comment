@@ -28,6 +28,11 @@ on:
         required: false
         default: "0"
         type: string
+      comment-on-failure:
+        description: "Whether to post a comment on the PR when tests fail"
+        required: false
+        default: "true"
+        type: string
       fail-on-low-coverage:
         description: "Whether to fail the build if coverage is below min-coverage"
         required: false
@@ -181,10 +186,16 @@ jobs:
           fi
 
       - name: Run Tests
+        id: run-tests
         shell: bash
         run: |
-          ${{ inputs.test-command }} | tee coverage.txt
-          exit ${PIPESTATUS[0]}
+          set -o pipefail
+          TEST_EXIT_CODE=0
+          ${{ inputs.test-command }} 2>&1 | tee test-output.txt || TEST_EXIT_CODE=$?
+          echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
+          if [ $TEST_EXIT_CODE -ne 0 ]; then
+            exit $TEST_EXIT_CODE
+          fi
 
       - name: Upload Logs on Failure
         if: failure()
@@ -193,12 +204,44 @@ jobs:
           name: laravel-logs
           path: storage/logs
 
+      - name: Process Test Failure Summary
+        if: failure() && steps.run-tests.outputs.exit_code != '0' && github.event_name == 'pull_request' && inputs.comment-on-failure == 'true' && hashFiles('test-output.txt') != ''
+        id: test-failure
+        run: |
+          echo "REPORT<<EOF" >> $GITHUB_OUTPUT
+          echo "### ❌ Tests Failed" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "The test suite encountered failures during the workflow run." >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "<details><summary>Click to view failure summary and logs</summary>" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "\`\`\`" >> $GITHUB_OUTPUT
+          # Strip ANSI color escape codes and clean carriage returns
+          CLEANED_LOG=$(cat test-output.txt | sed 's/\x1b\[[0-9;]*m//g' | tr -d '\r')
+          
+          # Extract failure details if 'FAILED' or 'FAILURES!' marker exists, otherwise output last 120 lines
+          if echo "$CLEANED_LOG" | grep -q "FAIL"; then
+            echo "$CLEANED_LOG" | awk '/(FAILED|FAILURES!|FAILED TESTS|Failed)/{flag=1} flag' | tail -n 120 >> $GITHUB_OUTPUT
+          else
+            echo "$CLEANED_LOG" | tail -n 120 >> $GITHUB_OUTPUT
+          fi
+          echo "\`\`\`" >> $GITHUB_OUTPUT
+          echo "</details>" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post Test Failure Comment
+        if: failure() && steps.test-failure.outputs.REPORT != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: test-coverage
+          message: ${{ steps.test-failure.outputs.REPORT }}
+
       - name: Process Coverage Summary
-        if: github.event_name == 'pull_request' && hashFiles('coverage.txt') != ''
+        if: success() && github.event_name == 'pull_request' && hashFiles('test-output.txt') != ''
         id: coverage
         run: |
           # Extract total percentage and strip non-numeric characters like '%'
-          TOTAL=$(grep "Total:" coverage.txt | awk '{print $2}' | tr -d '%')
+          TOTAL=$(grep "Total:" test-output.txt | awk '{print $2}' | tr -d '%')
 
           # If TOTAL is empty, default to N/A
           if [ -z "$TOTAL" ]; then
@@ -237,10 +280,10 @@ jobs:
           echo "\`\`\`" >> $GITHUB_OUTPUT
 
           # Extract the table part (starting from the first file path line)
-          if grep -q "\.\.\." coverage.txt; then
-            sed -n '/\.\.\./,$p' coverage.txt | sed 's/\x1b\[[0-9;]*m//g' >> $GITHUB_OUTPUT
+          if grep -q "\.\.\." test-output.txt; then
+            sed -n '/\.\.\./,$p' test-output.txt | sed 's/\x1b\[[0-9;]*m//g' >> $GITHUB_OUTPUT
           else
-            cat coverage.txt | sed 's/\x1b\[[0-9;]*m//g' >> $GITHUB_OUTPUT
+            cat test-output.txt | sed 's/\x1b\[[0-9;]*m//g' >> $GITHUB_OUTPUT
           fi
 
           echo "\`\`\`" >> $GITHUB_OUTPUT
@@ -248,14 +291,14 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Post Coverage Comment
-        if: github.event_name == 'pull_request' && steps.coverage.outputs.REPORT != ''
+        if: success() && github.event_name == 'pull_request' && steps.coverage.outputs.REPORT != ''
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: test-coverage
           message: ${{ steps.coverage.outputs.REPORT }}
 
       - name: Fail on Low Coverage
-        if: ${{ inputs.fail-on-low-coverage == 'true' && steps.coverage.outputs.IS_LOW == 'true' }}
+        if: success() && inputs.fail-on-low-coverage == 'true' && steps.coverage.outputs.IS_LOW == 'true'
         run: |
           echo "Error: Test coverage (${{ steps.coverage.outputs.TOTAL }}%) is below the minimum required threshold of ${{ inputs.min-coverage }}%."
           exit 1

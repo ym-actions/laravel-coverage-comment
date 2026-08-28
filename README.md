@@ -17,7 +17,8 @@
 ## ✨ Features
 
 - 🚀 **Zero-Config Pest Setup:** Run your Pest test suite out of the box with default PHPUnit-compatible coverage output.
-- 💬 **Sticky PR Comments:** Automatically post an interactive summary of your code coverage. Updates the same comment on subsequent commits to prevent Pull Request clutter.
+- 💬 **Sticky PR Comments:** Automatically post an interactive summary of your code coverage or test failures. Updates the same comment on subsequent commits to prevent Pull Request clutter.
+- ❌ **Failure Reporting:** If tests fail, automatically posts the failure summary and stack trace directly on the PR without having to dig through action logs.
 - 📦 **Automated Asset Building:** Auto-detects and runs npm, yarn, pnpm, or bun builds if your tests require compiled frontend assets.
 - ⚙️ **Smart Caching:** Automatically caches Composer dependencies to speed up subsequent workflow runs.
 - 🚨 **Coverage Guardrails:** Enforce a minimum coverage threshold (`min-coverage`) and optionally fail the build if it is not met.
@@ -37,13 +38,17 @@ graph TD
     E --> F[Cache & Install Composer Deps]
     F --> G[Prepare Environment .env]
     G --> H[Run Test Command with Coverage]
-    H -->|Fail| I[Upload Logs & Fail Job]
-    H -->|Success| J{Is Pull Request?}
-    J -->|Yes| K[Extract Coverage & Post/Update PR Comment]
-    J -->|No| L{Fail on Low Coverage?}
+    H -->|Fail| I[Upload Logs]
+    I --> J{Is PR & Comment on Failure?}
+    J -->|Yes| K[Post Failure Comment on PR]
+    J -->|No| L[Fail Job]
     K --> L
-    L -->|Yes & Coverage < Min| M[Fail Job]
-    L -->|No or Coverage >= Min| N[Success]
+    H -->|Success| M{Is Pull Request?}
+    M -->|Yes| N[Extract Coverage & Post/Update PR Comment]
+    M -->|No| O{Fail on Low Coverage?}
+    N --> O
+    O -->|Yes & Coverage < Min| P[Fail Job]
+    O -->|No or Coverage >= Min| Q[Success]
 ```
 
 ---
@@ -80,6 +85,7 @@ jobs:
 | `test-command`         | The command to execute tests and generate coverage.                           | `string` | No       | `"./vendor/bin/pest --ci --coverage"`                                        |
 | `coverage-driver`      | PHP extension to use for coverage (`pcov` or `xdebug`).                       | `string` | No       | `"pcov"`                                                                     |
 | `min-coverage`         | Minimum coverage percentage required (e.g., `80`).                            | `string` | No       | `"0"`                                                                        |
+| `comment-on-failure`   | Whether to post failure details as a PR comment when tests fail.              | `string` | No       | `"true"`                                                                     |
 | `fail-on-low-coverage` | Whether to fail the build if coverage is below `min-coverage`.                | `string` | No       | `"false"`                                                                    |
 | `build-assets`         | Compile frontend assets before running tests (`true` or `false`).             | `string` | No       | `"false"`                                                                    |
 | `asset-build-command`  | Custom compile command. Use `'auto'` for auto-detection of npm/yarn/pnpm/bun. | `string` | No       | `"auto"`                                                                     |
